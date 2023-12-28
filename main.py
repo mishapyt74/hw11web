@@ -1,7 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from fastapi.openapi.models import Contact
+from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Date
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
+from fastapi import HTTPException
+from typing import List
 
 app = FastAPI()
 
@@ -22,28 +26,59 @@ class Contact(Base):
     birth_date = Column(Date)
     additional_info = Column(String, nullable=True)
 
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 Base.metadata.create_all(bind=engine)
 
-@app.post("/contacts/")
-def create_contact():
+
+class ContactCreate:
     pass
 
-@app.get("/contacts/")
-def get_all_contacts():
-    pass
 
-@app.get("/contacts/{contact_id}")
-def get_contact(contact_id: int):
-    pass
+@app.post("/contacts/", response_model=Contact)
+def create_contact(contact: ContactCreate, db: Session = Depends(get_db)):
+    new_contact = Contact(**contact.dict())
+    db.add(new_contact)
+    db.commit()
+    db.refresh(new_contact)
+    return new_contact
 
-@app.put("/contacts/{contact_id}")
-def update_contact(contact_id: int):
-    pass
 
-@app.delete("/contacts/{contact_id}")
-def delete_contact(contact_id: int):
-    pass
+@app.get("/contacts/", response_model=List[Contact])
+def get_all_contacts(db: Session = Depends(get_db)):
+    return db.query(Contact).all()
+
+
+@app.put("/contacts/{contact_id}", response_model=Contact)
+def update_contact(contact_id: int, contact: ContactCreate, db: Session = Depends(get_db), get_db=None):
+    db_contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not db_contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    for key, value in contact.dict().items():
+        setattr(db_contact, key, value)
+    db.commit()
+    db.refresh(db_contact)
+    return db_contact
+
+
+@app.delete("/contacts/{contact_id}", response_model=dict)
+def delete_contact(contact_id: int, db: Session = Depends(get_db)):
+    db_contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not db_contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    db.delete(db_contact)
+    db.commit()
+    return {"message": "Contact deleted successfully"}
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=8001)
